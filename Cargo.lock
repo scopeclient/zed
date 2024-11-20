@@ -1740,7 +1740,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.5.0"
-source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
+source = "git+https://github.com/scopeclient/blade?branch=gpui-stable#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
 dependencies = [
  "ash",
  "ash-window",
@@ -1770,7 +1770,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
+source = "git+https://github.com/scopeclient/blade?branch=gpui-stable#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1780,7 +1780,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.1.0"
-source = "git+https://github.com/kvark/blade?rev=e142a3a5e678eb6a13e642ad8401b1f3aa38e969#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
+source = "git+https://github.com/scopeclient/blade?branch=gpui-stable#e142a3a5e678eb6a13e642ad8401b1f3aa38e969"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -1981,27 +1981,6 @@ checksum = "7dafe3a8757b027e2be6e4e5601ed563c55989fcf1546e933c66c8eb3a058d35"
 dependencies = [
  "bytes 1.8.0",
  "either",
-]
-
-[[package]]
-name = "bzip2"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdb116a6ef3f6c3698828873ad02c3014b3c85cadb88496095628e3ef1e347f8"
-dependencies = [
- "bzip2-sys",
- "libc",
-]
-
-[[package]]
-name = "bzip2-sys"
-version = "0.1.11+1.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736a955f3fa7875102d57c82b8cac37ec45224a07fd32d58f9f7a186b6cd4cdc"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
@@ -15137,32 +15116,6 @@ name = "webpki-roots"
 version = "0.25.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
-
-[[package]]
-name = "webrtc-sys"
-version = "0.3.5"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
-dependencies = [
- "cc",
- "cxx",
- "cxx-build",
- "glob",
- "log",
- "webrtc-sys-build",
-]
-
-[[package]]
-name = "webrtc-sys-build"
-version = "0.3.5"
-source = "git+https://github.com/zed-industries/rust-sdks?rev=4262308983646ab5b0e0802c3d8bc52154f99aab#4262308983646ab5b0e0802c3d8bc52154f99aab"
-dependencies = [
- "fs2",
- "regex",
- "reqwest 0.11.27",
- "scratch",
- "semver",
- "zip",
-]
 
 [[package]]
 name = "webview2-com"
