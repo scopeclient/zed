@@ -3,7 +3,7 @@ use std::io::{Cursor, Write};
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
-use gpui::{point, size, AppContext, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
+use gpui::{point, size, App, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
 use ui::{px, SharedString};
@@ -29,7 +29,7 @@ impl std::fmt::Debug for LanguageModelImage {
 const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
 
 impl LanguageModelImage {
-    pub fn from_image(data: Image, cx: &mut AppContext) -> Task<Option<Self>> {
+    pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
         cx.background_executor().spawn(async move {
             match data.format() {
                 gpui::ImageFormat::Png
@@ -214,9 +214,9 @@ impl LanguageModelRequestMessage {
                 .content
                 .first()
                 .map(|content| match content {
-                    MessageContent::Text(text) => text.trim().is_empty(),
+                    MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
                     MessageContent::ToolResult(tool_result) => {
-                        tool_result.content.trim().is_empty()
+                        tool_result.content.chars().all(|c| c.is_whitespace())
                     }
                     MessageContent::ToolUse(_) | MessageContent::Image(_) => true,
                 })
@@ -347,7 +347,7 @@ impl LanguageModelRequest {
                             }
                             MessageContent::ToolUse(tool_use) => {
                                 Some(anthropic::RequestContent::ToolUse {
-                                    id: tool_use.id,
+                                    id: tool_use.id.to_string(),
                                     name: tool_use.name,
                                     input: tool_use.input,
                                     cache_control,

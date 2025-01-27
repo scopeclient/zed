@@ -1,8 +1,8 @@
 [package]
 name = "supermaven"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -31,9 +31,6 @@ text.workspace = true
 ui.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -1,9 +1,9 @@
 [package]
 name = "remote_server"
 description = "Daemon used for remote editing"
-edition = "2021"
+edition.workspace = true
 version = "0.1.0"
-publish = false
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -29,6 +29,8 @@ chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 env_logger.workspace = true
+extension.workspace = true
+extension_host.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -36,6 +38,7 @@ git_hosting_providers.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
+language_extension.workspace = true
 languages.workspace = true
 log.workspace = true
 lsp.workspace = true

@@ -1,10 +1,6 @@
 use futures::{channel::oneshot, FutureExt as _};
-use gpui::{AppContext, Global, Subscription, ViewContext};
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use gpui::{App, Context, Global, Subscription, Window};
+use std::{future::Future, pin::Pin, task::Poll};
 
 #[derive(Default)]
 struct FeatureFlags {
@@ -37,6 +33,32 @@ pub trait FeatureFlag {
     fn enabled_for_staff() -> bool {
         true
     }
+}
+
+pub struct Assistant2FeatureFlag;
+
+impl FeatureFlag for Assistant2FeatureFlag {
+    const NAME: &'static str = "assistant2";
+}
+
+pub struct ToolUseFeatureFlag;
+
+impl FeatureFlag for ToolUseFeatureFlag {
+    const NAME: &'static str = "assistant-tool-use";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+pub struct PredictEditsFeatureFlag;
+impl FeatureFlag for PredictEditsFeatureFlag {
+    const NAME: &'static str = "predict-edits";
+}
+
+pub struct GitUiFeatureFlag;
+impl FeatureFlag for GitUiFeatureFlag {
+    const NAME: &'static str = "git-ui";
 }
 
 pub struct Remoting {}
@@ -75,22 +97,22 @@ impl FeatureFlag for AutoCommand {
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut ViewContext<V>) + Send + Sync + 'static;
+        F: Fn(bool, &mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static;
 }
 
-impl<V> FeatureFlagViewExt<V> for ViewContext<'_, V>
+impl<V> FeatureFlagViewExt<V> for Context<'_, V>
 where
     V: 'static,
 {
-    fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
+    fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut ViewContext<V>) + 'static,
+        F: Fn(bool, &mut V, &mut Window, &mut Context<V>) + 'static,
     {
-        self.observe_global::<FeatureFlags>(move |v, cx| {
+        self.observe_global_in::<FeatureFlags>(window, move |v, window, cx| {
             let feature_flags = cx.global::<FeatureFlags>();
-            callback(feature_flags.has_flag::<T>(), v, cx);
+            callback(feature_flags.has_flag::<T>(), v, window, cx);
         })
     }
 }
@@ -104,10 +126,10 @@ pub trait FeatureFlagAppExt {
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: FnMut(bool, &mut AppContext) + 'static;
+        F: FnMut(bool, &mut App) + 'static;
 }
 
-impl FeatureFlagAppExt for AppContext {
+impl FeatureFlagAppExt for App {
     fn update_flags(&mut self, staff: bool, flags: Vec<String>) {
         let feature_flags = self.default_global::<FeatureFlags>();
         feature_flags.staff = staff;
@@ -133,7 +155,7 @@ impl FeatureFlagAppExt for AppContext {
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, mut callback: F) -> Subscription
     where
-        F: FnMut(bool, &mut AppContext) + 'static,
+        F: FnMut(bool, &mut App) + 'static,
     {
         self.observe_global::<FeatureFlags>(move |cx| {
             let feature_flags = cx.global::<FeatureFlags>();
@@ -170,7 +192,7 @@ pub struct WaitForFlag(oneshot::Receiver<bool>, Option<Subscription>);
 impl Future for WaitForFlag {
     type Output = bool;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> Poll<Self::Output> {
         self.0.poll_unpin(cx).map(|result| {
             self.1.take();
             result.unwrap_or(false)

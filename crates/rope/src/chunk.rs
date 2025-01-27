@@ -162,9 +162,11 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn text_summary(&self) -> TextSummary {
-        let (longest_row, longest_row_chars) = self.longest_row();
+        let mut chars = 0;
+        let (longest_row, longest_row_chars) = self.longest_row(&mut chars);
         TextSummary {
             len: self.len(),
+            chars,
             len_utf16: self.len_utf16(),
             lines: self.lines(),
             first_line_chars: self.first_line_chars(),
@@ -229,16 +231,19 @@ impl<'a> ChunkSlice<'a> {
     }
 
     /// Get the longest row in the chunk and its length in characters.
+    /// Calculate the total number of characters in the chunk along the way.
     #[inline(always)]
-    pub fn longest_row(&self) -> (u32, u32) {
+    pub fn longest_row(&self, total_chars: &mut usize) -> (u32, u32) {
         let mut chars = self.chars;
         let mut newlines = self.newlines;
+        *total_chars = 0;
         let mut row = 0;
         let mut longest_row = 0;
         let mut longest_row_chars = 0;
         while newlines > 0 {
             let newline_ix = newlines.trailing_zeros();
             let row_chars = (chars & ((1 << newline_ix) - 1)).count_ones() as u8;
+            *total_chars += usize::from(row_chars);
             if row_chars > longest_row_chars {
                 longest_row = row;
                 longest_row_chars = row_chars;
@@ -249,9 +254,11 @@ impl<'a> ChunkSlice<'a> {
             chars >>= newline_ix;
             chars >>= 1;
             row += 1;
+            *total_chars += 1;
         }
 
         let row_chars = chars.count_ones() as u8;
+        *total_chars += usize::from(row_chars);
         if row_chars > longest_row_chars {
             (row, row_chars as u32)
         } else {
@@ -504,8 +511,6 @@ impl<'a> ChunkSlice<'a> {
     #[inline(always)]
     pub fn tabs(&self) -> Tabs {
         Tabs {
-            byte_offset: 0,
-            char_offset: 0,
             tabs: self.tabs,
             chars: self.chars,
         }
@@ -513,8 +518,6 @@ impl<'a> ChunkSlice<'a> {
 }
 
 pub struct Tabs {
-    byte_offset: usize,
-    char_offset: usize,
     tabs: u128,
     chars: u128,
 }
@@ -536,21 +539,14 @@ impl Iterator for Tabs {
         let tab_offset = self.tabs.trailing_zeros() as usize;
         let chars_mask = (1 << tab_offset) - 1;
         let char_offset = (self.chars & chars_mask).count_ones() as usize;
-        self.byte_offset += tab_offset;
-        self.char_offset += char_offset;
-        let position = TabPosition {
-            byte_offset: self.byte_offset,
-            char_offset: self.char_offset,
-        };
 
-        self.byte_offset += 1;
-        self.char_offset += 1;
-        if self.byte_offset == MAX_BASE {
-            self.tabs = 0;
-        } else {
-            self.tabs >>= tab_offset + 1;
-            self.chars >>= tab_offset + 1;
-        }
+        // Since tabs are 1 byte the tab offset is the same as the byte offset
+        let position = TabPosition {
+            byte_offset: tab_offset,
+            char_offset: char_offset,
+        };
+        // Remove the tab we've just seen
+        self.tabs ^= 1 << tab_offset;
 
         Some(position)
     }
@@ -919,7 +915,7 @@ mod tests {
         }
 
         // Verify longest row
-        let (longest_row, longest_chars) = chunk.longest_row();
+        let (longest_row, longest_chars) = chunk.longest_row(&mut 0);
         let mut max_chars = 0;
         let mut current_row = 0;
         let mut current_chars = 0;

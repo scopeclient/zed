@@ -32,15 +32,15 @@ impl ListSubHeader {
     }
 }
 
-impl Selectable for ListSubHeader {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListSubHeader {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 }
 
 impl RenderOnce for ListSubHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .flex_1()
             .w_full()

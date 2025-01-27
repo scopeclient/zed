@@ -17,8 +17,8 @@ use futures::{
     select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
-    ModelContext, SemanticVersion, Task, WeakModel,
+    App, AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter, Global,
+    SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -253,9 +253,11 @@ impl SshSocket {
     // :WARNING: ssh unquotes arguments when executing on the remote :WARNING:
     // e.g. $ ssh host sh -c 'ls -l' is equivalent to $ ssh host sh -c ls -l
     // and passes -l as an argument to sh, not to ls.
-    // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
+    // Furthermore, some setups (e.g. Coder) will change directory when SSH'ing
+    // into a machine. You must use `cd` to get back to $HOME.
+    // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
-        let mut command = process::Command::new("ssh");
+        let mut command = util::command::new_smol_command("ssh");
         let to_run = iter::once(&program)
             .chain(args.iter())
             .map(|token| {
@@ -267,6 +269,7 @@ impl SshSocket {
                 shlex::try_quote(token).unwrap()
             })
             .join(" ");
+        let to_run = format!("cd; {to_run}");
         log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
@@ -500,7 +503,7 @@ impl ConnectionIdentifier {
     // Must be less than about 100 characters
     //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
     // So our strings should be at most 20 characters or so.
-    fn to_string(&self, cx: &AppContext) -> String {
+    fn to_string(&self, cx: &App) -> String {
         let identifier_prefix = match ReleaseChannel::global(cx) {
             ReleaseChannel::Stable => "".to_string(),
             release_channel => format!("{}-", release_channel.dev_name()),
@@ -520,8 +523,8 @@ impl SshRemoteClient {
         connection_options: SshConnectionOptions,
         cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Option<Model<Self>>>> {
+        cx: &mut App,
+    ) -> Task<Result<Option<Entity<Self>>>> {
         let unique_identifier = unique_identifier.to_string(cx);
         cx.spawn(|mut cx| async move {
             let success = Box::pin(async move {
@@ -531,7 +534,7 @@ impl SshRemoteClient {
 
                 let client =
                     cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
-                let this = cx.new_model(|_| Self {
+                let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
                     connection_options: connection_options.clone(),
@@ -626,7 +629,7 @@ impl SshRemoteClient {
         })
     }
 
-    fn reconnect(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    fn reconnect(&mut self, cx: &mut Context<Self>) -> Result<()> {
         let mut lock = self.state.lock();
 
         let can_reconnect = lock
@@ -808,7 +811,7 @@ impl SshRemoteClient {
     }
 
     fn heartbeat(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         mut connection_activity_rx: mpsc::Receiver<()>,
         cx: &mut AsyncAppContext,
     ) -> Task<Result<()>> {
@@ -883,7 +886,7 @@ impl SshRemoteClient {
     fn handle_heartbeat_result(
         &mut self,
         missed_heartbeats: usize,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ControlFlow<()> {
         let state = self.state.lock().take().unwrap();
         let next_state = if missed_heartbeats > 0 {
@@ -910,7 +913,7 @@ impl SshRemoteClient {
     }
 
     fn monitor(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         io_task: Task<Result<i32>>,
         cx: &AsyncAppContext,
     ) -> Task<Result<()>> {
@@ -951,11 +954,7 @@ impl SshRemoteClient {
         self.state.lock().as_ref().map_or(false, check)
     }
 
-    fn try_set_state(
-        &self,
-        cx: &mut ModelContext<Self>,
-        map: impl FnOnce(&State) -> Option<State>,
-    ) {
+    fn try_set_state(&self, cx: &mut Context<Self>, map: impl FnOnce(&State) -> Option<State>) {
         let mut lock = self.state.lock();
         let new_state = lock.as_ref().and_then(map);
 
@@ -965,7 +964,7 @@ impl SshRemoteClient {
         }
     }
 
-    fn set_state(&self, state: State, cx: &mut ModelContext<Self>) {
+    fn set_state(&self, state: State, cx: &mut Context<Self>) {
         log::info!("setting state to '{}'", &state);
 
         let is_reconnect_exhausted = state.is_reconnect_exhausted();
@@ -978,7 +977,7 @@ impl SshRemoteClient {
         cx.notify();
     }
 
-    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
+    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Entity<E>) {
         self.client.subscribe_to_entity(remote_id, entity);
     }
 
@@ -994,7 +993,7 @@ impl SshRemoteClient {
         &self,
         src_path: PathBuf,
         dest_path: PathBuf,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<()>> {
         let state = self.state.lock();
         let Some(connection) = state.as_ref().and_then(|state| state.ssh_connection()) else {
@@ -1028,7 +1027,7 @@ impl SshRemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_disconnect(&self, client_cx: &mut AppContext) -> Task<()> {
+    pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
         client_cx.spawn(|cx| async move {
             let connection = cx
@@ -1074,7 +1073,7 @@ impl SshRemoteClient {
                 c.connections.insert(
                     opts.clone(),
                     ConnectionPoolEntry::Connecting(
-                        cx.foreground_executor()
+                        cx.background_executor()
                             .spawn({
                                 let connection = connection.clone();
                                 async move { Ok(connection.clone()) }
@@ -1092,7 +1091,7 @@ impl SshRemoteClient {
     pub async fn fake_client(
         opts: SshConnectionOptions,
         client_cx: &mut gpui::TestAppContext,
-    ) -> Model<Self> {
+    ) -> Entity<Self> {
         let (_tx, rx) = oneshot::channel();
         client_cx
             .update(|cx| {
@@ -1127,7 +1126,7 @@ impl ConnectionPool {
         &mut self,
         opts: SshConnectionOptions,
         delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
         let connection = self.connections.get(&opts);
         match connection {
@@ -1207,12 +1206,8 @@ trait RemoteConnection: Send + Sync {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Task<Result<i32>>;
-    fn upload_directory(
-        &self,
-        src_path: PathBuf,
-        dest_path: PathBuf,
-        cx: &AppContext,
-    ) -> Task<Result<()>>;
+    fn upload_directory(&self, src_path: PathBuf, dest_path: PathBuf, cx: &App)
+        -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
@@ -1224,7 +1219,7 @@ trait RemoteConnection: Send + Sync {
 
 struct SshRemoteConnection {
     socket: SshSocket,
-    master_process: Mutex<Option<process::Child>>,
+    master_process: Mutex<Option<Child>>,
     remote_binary_path: Option<PathBuf>,
     _temp_dir: TempDir,
 }
@@ -1256,9 +1251,9 @@ impl RemoteConnection for SshRemoteConnection {
         &self,
         src_path: PathBuf,
         dest_path: PathBuf,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<()>> {
-        let mut command = process::Command::new("scp");
+        let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
@@ -1269,6 +1264,7 @@ impl RemoteConnection for SshRemoteConnection {
                     .map(|port| vec!["-P".to_string(), port.to_string()])
                     .unwrap_or_default(),
             )
+            .arg("-C")
             .arg("-r")
             .arg(&src_path)
             .arg(format!(
@@ -1430,7 +1426,7 @@ impl SshRemoteConnection {
 
         anyhow::ensure!(
             which::which("nc").is_ok(),
-            "Cannot find nc, which is required to connect over ssh."
+            "Cannot find `nc` command (netcat), which is required to connect over SSH."
         );
 
         // Create an askpass script that communicates back to this process.
@@ -1910,7 +1906,7 @@ impl SshRemoteConnection {
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-        let mut command = process::Command::new("scp");
+        let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
@@ -2067,7 +2063,7 @@ impl ChannelClient {
     pub fn new(
         incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
-        cx: &AppContext,
+        cx: &App,
         name: &'static str,
     ) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
@@ -2195,7 +2191,7 @@ impl ChannelClient {
         *self.task.lock() = Self::start_handling_messages(Arc::downgrade(self), incoming_rx, cx);
     }
 
-    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
+    pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Entity<E>) {
         let id = (TypeId::of::<E>(), remote_id);
 
         let mut message_handlers = self.message_handlers.lock();
@@ -2369,7 +2365,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AppContext, AsyncAppContext, SemanticVersion, Task, TestAppContext};
+    use gpui::{App, AsyncAppContext, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
@@ -2417,7 +2413,7 @@ mod fake {
             &self,
             _src_path: PathBuf,
             _dest_path: PathBuf,
-            _cx: &AppContext,
+            _cx: &App,
         ) -> Task<Result<()>> {
             unreachable!()
         }

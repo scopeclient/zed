@@ -1,16 +1,16 @@
 use super::{
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    BoolExt,
+    renderer, screen_capture, BoolExt,
 };
 use crate::{
     hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
     ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
-    WindowParams,
+    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -57,8 +57,7 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
-
-use super::renderer;
+use util::ResultExt;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -291,6 +290,11 @@ impl MacPlatform {
                 action,
                 os_action,
             } => {
+                // Note that this is not the standard logic for selecting which keybinding to
+                // display. Typically the last binding takes precedence for display. However, in
+                // this case the menus are not updated on context changes. To make these bindings
+                // more likely to be correct, the first binding instead takes precedence (typically
+                // from the base keymap).
                 let keystrokes = keymap
                     .bindings_for_action(action.as_ref())
                     .next()
@@ -552,6 +556,12 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        screen_capture::get_sources()
+    }
+
     fn active_window(&self) -> Option<AnyWindowHandle> {
         MacWindow::active_window()
     }
@@ -754,6 +764,10 @@ impl Platform for MacPlatform {
         done_rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        true
+    }
+
     fn reveal_path(&self, path: &Path) {
         unsafe {
             let path = path.to_path_buf();
@@ -775,15 +789,16 @@ impl Platform for MacPlatform {
     }
 
     fn open_with_system(&self, path: &Path) {
-        let path = path.to_path_buf();
+        let path = path.to_owned();
         self.0
             .lock()
             .background_executor
             .spawn(async move {
-                std::process::Command::new("open")
+                let _ = std::process::Command::new("open")
                     .arg(path)
                     .spawn()
-                    .expect("Failed to open file");
+                    .context("invoking open command")
+                    .log_err();
             })
             .detach();
     }
@@ -844,7 +859,9 @@ impl Platform for MacPlatform {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            app.setMainMenu_(self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap));
+            let menu = self.create_menu_bar(menus, NSWindow::delegate(app), actions, keymap);
+            drop(state);
+            app.setMainMenu_(menu);
         }
     }
 

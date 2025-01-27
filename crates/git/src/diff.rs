@@ -64,23 +64,37 @@ impl sum_tree::Summary for DiffHunkSummary {
 
 #[derive(Debug, Clone)]
 pub struct BufferDiff {
-    last_buffer_version: Option<clock::Global>,
     tree: SumTree<InternalDiffHunk>,
 }
 
 impl BufferDiff {
     pub fn new(buffer: &BufferSnapshot) -> BufferDiff {
         BufferDiff {
-            last_buffer_version: None,
             tree: SumTree::new(buffer),
         }
+    }
+
+    pub fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+        let mut tree = SumTree::new(buffer);
+
+        let buffer_text = buffer.as_rope().to_string();
+        let patch = Self::diff(diff_base, &buffer_text);
+
+        if let Some(patch) = patch {
+            let mut divergence = 0;
+            for hunk_index in 0..patch.num_hunks() {
+                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
+                tree.push(hunk, buffer);
+            }
+        }
+
+        Self { tree }
     }
 
     pub fn is_empty(&self) -> bool {
         self.tree.is_empty()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
@@ -105,32 +119,38 @@ impl BufferDiff {
                 !before_start && !after_end
             });
 
-        let anchor_iter = std::iter::from_fn(move || {
+        let anchor_iter = iter::from_fn(move || {
             cursor.next(buffer);
             cursor.item()
         })
         .flat_map(move |hunk| {
             [
-                (&hunk.buffer_range.start, hunk.diff_base_byte_range.start),
-                (&hunk.buffer_range.end, hunk.diff_base_byte_range.end),
+                (
+                    &hunk.buffer_range.start,
+                    (hunk.buffer_range.start, hunk.diff_base_byte_range.start),
+                ),
+                (
+                    &hunk.buffer_range.end,
+                    (hunk.buffer_range.end, hunk.diff_base_byte_range.end),
+                ),
             ]
-            .into_iter()
         });
 
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || {
-            let (start_point, start_base) = summaries.next()?;
-            let (mut end_point, end_base) = summaries.next()?;
+            let (start_point, (start_anchor, start_base)) = summaries.next()?;
+            let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
 
             if end_point.column > 0 {
                 end_point.row += 1;
                 end_point.column = 0;
+                end_anchor = buffer.anchor_before(end_point);
             }
 
             Some(DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
-                buffer_range: buffer.anchor_before(start_point)..buffer.anchor_after(end_point),
+                buffer_range: start_anchor..end_anchor,
             })
         })
     }
@@ -148,7 +168,7 @@ impl BufferDiff {
                 !before_start && !after_end
             });
 
-        std::iter::from_fn(move || {
+        iter::from_fn(move || {
             cursor.prev(buffer);
 
             let hunk = cursor.item()?;
@@ -169,27 +189,11 @@ impl BufferDiff {
 
     #[cfg(test)]
     fn clear(&mut self, buffer: &text::BufferSnapshot) {
-        self.last_buffer_version = Some(buffer.version().clone());
         self.tree = SumTree::new(buffer);
     }
 
-    pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        let mut tree = SumTree::new(buffer);
-
-        let diff_base_text = diff_base.to_string();
-        let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(&diff_base_text, &buffer_text);
-
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
-                tree.push(hunk, buffer);
-            }
-        }
-
-        self.tree = tree;
-        self.last_buffer_version = Some(buffer.version().clone());
+    pub fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
+        *self = Self::build(&diff_base.to_string(), buffer);
     }
 
     #[cfg(test)]
@@ -348,7 +352,7 @@ mod tests {
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new(&buffer);
-        smol::block_on(diff.update(&diff_base_rope, &buffer));
+        diff.update(&diff_base_rope, &buffer);
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
@@ -357,7 +361,7 @@ mod tests {
         );
 
         buffer.edit([(0..0, "point five\n")]);
-        smol::block_on(diff.update(&diff_base_rope, &buffer));
+        diff.update(&diff_base_rope, &buffer);
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
@@ -409,7 +413,7 @@ mod tests {
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new(&buffer);
-        smol::block_on(diff.update(&diff_base_rope, &buffer));
+        diff.update(&diff_base_rope, &buffer);
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(

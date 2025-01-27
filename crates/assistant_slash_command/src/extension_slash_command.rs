@@ -3,16 +3,38 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::{Extension, WorktreeDelegate};
-use gpui::{Task, WeakView, WindowContext};
+use extension::{Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegate};
+use gpui::{App, Task, WeakEntity, Window};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandResult,
+    SlashCommandRegistry, SlashCommandResult,
 };
+
+pub fn init(cx: &mut App) {
+    let proxy = ExtensionHostProxy::default_global(cx);
+    proxy.register_slash_command_proxy(SlashCommandRegistryProxy {
+        slash_command_registry: SlashCommandRegistry::global(cx),
+    });
+}
+
+struct SlashCommandRegistryProxy {
+    slash_command_registry: Arc<SlashCommandRegistry>,
+}
+
+impl ExtensionSlashCommandProxy for SlashCommandRegistryProxy {
+    fn register_slash_command(
+        &self,
+        extension: Arc<dyn Extension>,
+        command: extension::SlashCommand,
+    ) {
+        self.slash_command_registry
+            .register_command(ExtensionSlashCommand::new(extension, command), false)
+    }
+}
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 struct WorktreeDelegateAdapter(Arc<dyn LspAdapterDelegate>);
@@ -75,8 +97,9 @@ impl SlashCommand for ExtensionSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let command = self.command.clone();
         let arguments = arguments.to_owned();
@@ -105,9 +128,10 @@ impl SlashCommand for ExtensionSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let command = self.command.clone();
         let arguments = arguments.to_owned();
